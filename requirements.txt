@@ -1,0 +1,21 @@
+# Core web framework
+Flask>=2.3
+Werkzeug>=2.3
+
+# PDF extraction engines (all local, no API key required)
+pdfplumber>=0.10          # engine 1 – text-layer table extraction
+camelot-py>=1.0           # engine 2/3 – lattice + stream table detection
+tabula-py>=2.9            # engine 4 – Java-based fallback
+pdfminer.six>=20221105    # engine 5 – raw text heuristic
+
+# Image / rendering support
+Pillow>=10.0
+opencv-python-headless>=4.8   # required by camelot
+
+# Data handling
+pandas>=2.0
+numpy>=1.24
+
+# Optional LLM providers (only used if API key env vars are set)
+# anthropic>=0.25          # uncomment if ANTHROPIC_API_KEY will be set
+# openai>=1.0              # uncomment if OPENAI_API_KEY will be set

@@ -662,6 +662,286 @@ def _deduplicate(tables: List[ExtractedTable]) -> List[ExtractedTable]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Scanned-PDF grid extraction (OCR per cell, structure from ruled lines)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _find_grid_positions(line_mask, axis, min_frac=0.5, merge_px=8):
+    """
+    Return sorted line coordinates from a horizontal/vertical line mask.
+
+    Projects the mask onto the given axis and keeps positions covered by a
+    line spanning at least min_frac of the region, merging positions closer
+    than merge_px into one line.
+    """
+    import numpy as np
+
+    span = line_mask.shape[1 - axis]
+    profile = (line_mask > 0).sum(axis=1 - axis)
+    hits = np.where(profile >= span * min_frac)[0]
+    if len(hits) == 0:
+        return []
+    lines = [int(hits[0])]
+    for h in hits[1:]:
+        if h - lines[-1] > merge_px:
+            lines.append(int(h))
+        else:
+            lines[-1] = (lines[-1] + int(h)) // 2
+    return lines
+
+
+def _render_page_gray(page):
+    """Render a page to grayscale at a resolution adapted to page size.
+
+    Scanner PDFs often embed the image on a page whose point size equals
+    the pixel size, so a fixed 300 dpi would render a needlessly huge
+    image. Target ~3500 px on the longest side. Returns (gray, dpi).
+    """
+    import cv2
+    import numpy as np
+
+    longest = max(float(page.width), float(page.height))
+    res = min(300, max(72, int(72 * 3500 / longest)))
+    pil_img = page.to_image(resolution=res).original
+    gray = cv2.cvtColor(np.array(pil_img.convert("RGB")), cv2.COLOR_RGB2GRAY)
+    return gray, res
+
+
+def _line_masks(gray):
+    """Return (horiz, vert) ruled-line masks for a grayscale page image.
+
+    Invert so ink is bright, then adaptive-threshold (standard OpenCV
+    line-detection recipe), then morphological opening with long thin
+    kernels to keep only ruled lines.
+    """
+    import cv2
+
+    thr = cv2.adaptiveThreshold(
+        cv2.bitwise_not(gray), 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+        cv2.THRESH_BINARY, 15, -2)
+    h_img, w_img = thr.shape
+    horiz = cv2.morphologyEx(
+        thr, cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (max(w_img // 30, 10), 1)))
+    vert = cv2.morphologyEx(
+        thr, cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(h_img // 30, 10))))
+    return horiz, vert
+
+
+def _grid_regions(horiz, vert):
+    """Bounding boxes of ruled-grid regions in reading order: (y, x, w, h)."""
+    import cv2
+
+    grid_mask = cv2.add(horiz, vert)
+    h_img, w_img = grid_mask.shape
+    contours, _ = cv2.findContours(
+        grid_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    regions = []
+    for c in contours:
+        x, y, w, h = cv2.boundingRect(c)
+        # Modest size floor to skip specks; genuine tables are
+        # confirmed later by requiring >=2 ruled lines each way.
+        if w > w_img * 0.05 and h > h_img * 0.01:
+            regions.append((y, x, w, h))
+    regions.sort()
+    return regions
+
+
+def _ocr_cell(cell, min_ink_px: int = 4) -> str:
+    """OCR a single grayscale cell crop; returns "" for blank cells."""
+    import cv2
+    import pytesseract
+
+    if cell is None or cell.size == 0:
+        return ""
+    # Skip OCR on visually blank cells (big speed win)
+    if (cell < 128).sum() < min_ink_px:
+        return ""
+    # Tesseract reads small tight crops poorly: 2x upscale short cells,
+    # add a white margin, and Otsu-binarize to sharpen anti-aliased glyphs.
+    if cell.shape[0] < 100:
+        cell = cv2.resize(cell, None, fx=2, fy=2,
+                          interpolation=cv2.INTER_CUBIC)
+    cell = cv2.copyMakeBorder(cell, 12, 12, 12, 12,
+                              cv2.BORDER_CONSTANT, value=255)
+    _, cell = cv2.threshold(cell, 0, 255,
+                            cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    text = pytesseract.image_to_string(cell, config="--psm 6").strip()
+    # psm 6 (block mode) misreads cells holding a single short token;
+    # retry those in single-word mode and prefer the cleaner result.
+    if len(text) <= 2 and not text.isalnum():
+        retry = pytesseract.image_to_string(cell, config="--psm 8").strip()
+        if retry.isalnum():
+            text = retry
+    return text
+
+
+def _extract_ocr_grid(pdf_path: str) -> List[ExtractedTable]:
+    """
+    Structure-exact extraction for scanned PDFs with ruled (bordered) tables.
+
+    The table's row/column structure is taken from the drawn grid lines
+    detected in the page image — not inferred from text positions — and each
+    cell is OCR'd individually so text can never merge across cells. The
+    grid shape is therefore a 1:1 match with the source; only character
+    accuracy depends on OCR quality.
+    """
+    results: List[ExtractedTable] = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page_num, page in enumerate(pdf.pages, start=1):
+            try:
+                gray, _res = _render_page_gray(page)
+            except Exception as exc:
+                logger.warning("page render failed: %s", exc)
+                continue
+            horiz, vert = _line_masks(gray)
+            for y, x, w, h in _grid_regions(horiz, vert):
+                ys = _find_grid_positions(horiz[y:y + h, x:x + w], axis=0)
+                xs = _find_grid_positions(vert[y:y + h, x:x + w], axis=1)
+                if len(ys) < 2 or len(xs) < 2:
+                    continue
+                rows = []
+                for r in range(len(ys) - 1):
+                    row = []
+                    for cix in range(len(xs) - 1):
+                        y0, y1 = y + ys[r] + 3, y + ys[r + 1] - 3
+                        x0, x1 = x + xs[cix] + 3, x + xs[cix + 1] - 3
+                        if y1 <= y0 or x1 <= x0:
+                            row.append("")
+                            continue
+                        row.append(_ocr_cell(gray[y0:y1, x0:x1]))
+                    rows.append(row)
+                if rows and any(any(c for c in r) for r in rows):
+                    results.append(ExtractedTable(
+                        source="ocr-grid", page=page_num,
+                        df=pd.DataFrame(rows),
+                    ))
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Public API — verbatim direct extraction
+# ─────────────────────────────────────────────────────────────────────────────
+
+def extract_tables_direct(pdf_path: str) -> ExtractionResult:
+    """
+    Structure-preserving extraction for direct (no-reference) mode.
+
+    Every table detected in the PDF is returned exactly as it appears in
+    the source grid:
+      - one ExtractedTable per detected table, in page order then visual
+        order (top-to-bottom, left-to-right) within each page
+      - the full cell grid including the header row is kept as data rows
+        (DataFrame columns are positional integers, never promoted)
+      - cell text is copied verbatim; only None (empty cell) becomes ""
+      - no cleaning, no scoring, no deduplication, no per-page winner
+
+    Primary engine is pdfplumber's geometric table finder. If it detects
+    nothing in the whole document, camelot-lattice is tried as a fallback
+    (also verbatim). No text-heuristic engines are used here — they infer
+    structure, which this mode must not do.
+    """
+    result = ExtractionResult()
+    tables: List[ExtractedTable] = []
+
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            for page_num, page in enumerate(pdf.pages, start=1):
+                found = page.find_tables()
+                found.sort(key=lambda t: (round(t.bbox[1]), round(t.bbox[0])))
+                for tbl in found:
+                    grid = tbl.extract()
+                    if not grid or not any(any(c is not None for c in row) for row in grid):
+                        continue
+                    rows = [["" if c is None else str(c) for c in row] for row in grid]
+                    tables.append(ExtractedTable(
+                        source="pdfplumber-grid", page=page_num,
+                        df=pd.DataFrame(rows),
+                    ))
+        if tables:
+            result.strategy_used = "pdfplumber-grid"
+            result.engine_log.append(
+                f"pdfplumber-grid: found {len(tables)} table(s)")
+    except Exception as exc:
+        msg = f"pdfplumber-grid: FAILED ({exc})"
+        result.engine_log.append(msg)
+        logger.warning(msg)
+
+    if not tables:
+        try:
+            import camelot
+            found = camelot.read_pdf(pdf_path, pages="all", flavor="lattice")
+            for t in found:
+                if t.df is None or t.df.empty:
+                    continue
+                tables.append(ExtractedTable(
+                    source="camelot-lattice", page=t.page,
+                    df=t.df.copy(),
+                ))
+            if tables:
+                result.strategy_used = "camelot-lattice"
+                result.engine_log.append(
+                    f"camelot-lattice: found {len(tables)} table(s)")
+        except ImportError:
+            result.engine_log.append("camelot-lattice: not installed")
+        except Exception as exc:
+            msg = f"camelot-lattice: FAILED ({exc})"
+            result.engine_log.append(msg)
+            logger.warning(msg)
+
+    if not tables and _is_scanned_pdf(pdf_path):
+        available, missing = _ocr_availability()
+        if not available:
+            result.warnings.append(
+                "This PDF appears to be scanned / image-only (no text layer), "
+                "so it can only be read with OCR — but OCR is not available. "
+                "Missing: " + "; ".join(missing) + "."
+            )
+            return result
+        try:
+            tables = _extract_ocr_grid(pdf_path)
+            if tables:
+                result.strategy_used = "ocr-grid"
+                result.engine_log.append(
+                    f"ocr-grid: found {len(tables)} table(s)")
+                result.warnings.append(
+                    "This PDF is scanned, so cell text was read with OCR. "
+                    "Table structure (rows/columns) comes from the ruled grid "
+                    "lines and matches the source exactly, but OCR character "
+                    "accuracy is not guaranteed — spot-check values against "
+                    "the PDF."
+                )
+            else:
+                result.warnings.append(
+                    "This PDF appears to be scanned / image-only. No ruled "
+                    "table grid could be detected in the page images — the "
+                    "scan may be low-resolution, skewed, or the table may "
+                    "have no visible borders (borderless scanned tables "
+                    "cannot be extracted structure-exactly)."
+                )
+                return result
+        except Exception as exc:
+            msg = f"ocr-grid: FAILED ({exc})"
+            result.engine_log.append(msg)
+            logger.warning(msg)
+            result.warnings.append(
+                "This PDF appears to be scanned and OCR grid extraction "
+                f"failed: {exc}"
+            )
+            return result
+
+    if not tables:
+        result.warnings.append(
+            "No bordered/grid tables detected. "
+            "Engine details: " + "; ".join(result.engine_log)
+        )
+        return result
+
+    result.tables = tables
+    return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
 

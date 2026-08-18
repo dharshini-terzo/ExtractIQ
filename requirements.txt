@@ -10,11 +10,16 @@ pdfminer.six>=20221105    # engine 5 – raw text heuristic
 
 # Image / rendering support
 Pillow>=10.0
-opencv-python-headless>=4.8   # required by camelot
+opencv-python-headless>=4.8   # required by camelot; also used for scanned-table grid detection
+
+# OCR for scanned PDFs (also requires the tesseract binary:
+# macOS: brew install tesseract / Debian: apt-get install tesseract-ocr)
+pytesseract>=0.3
 
 # Data handling
 pandas>=2.0
 numpy>=1.24
+openpyxl>=3.1          # .xlsx output (one sheet per table in direct mode)
 
 # Optional LLM providers (only used if API key env vars are set)
 # anthropic>=0.25          # uncomment if ANTHROPIC_API_KEY will be set

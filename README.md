@@ -77,8 +77,35 @@ python app.py
 ## Usage
 
 ### Direct extraction (no reference sheet)
-Upload a PDF → click **Extract & Download CSV**.  
-All five engines run; the highest-quality result is returned.
+Upload a PDF → click **Extract & Download**.  
+Direct mode converts the whole document into an ordered metadata stream
+(metadata.py) — text rows and tables in reading order — and renders it
+into **one xlsx sheet** that mirrors the source with no manual
+rearranging:
+
+* Table **rows** come from ruled horizontal lines; logical rows spanning
+  several text lines (wrapped names, name-above-values layouts) are
+  reassembled from column occupancy.
+* Table **columns** come from interior ruled vertical lines when present,
+  otherwise from whitespace gutters — vertical strips no text crosses
+  (the layout of most real ordering documents).
+* Tables that continue across pages (repeated headers) are merged into
+  one table; repeating page headers/footers are dropped.
+* Headings and text between tables become plain rows in reading order.
+* Every cell is written as text so spreadsheet apps cannot coerce values
+  ("007" stays "007", "1,000.50" stays "1,000.50").
+
+The metadata JSON (tables, grid geometry, cells) is saved next to each
+output and served at `/metadata/<job_id>` for inspection or downstream
+modules.
+
+**Scanned PDFs** are supported when tesseract is installed: words are
+read with a dual-pass OCR (two segmentation modes, deduplicated), and any
+table cell the page-level OCR missed is recovered by OCR'ing that cell's
+crop individually. Structure always comes from the ruled lines and
+whitespace gutters — never inferred from an LLM or fuzzy matching. A
+warning reminds the user that OCR character accuracy on scans is not
+guaranteed and values should be spot-checked.
 
 ### Reference-sheet mode
 Upload a PDF **and** a reference CSV that shows the desired column

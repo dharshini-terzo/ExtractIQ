@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF → CSV Converter</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+    :root {
+      --bg:        #0f1117;
+      --surface:   #181c27;
+      --surface2:  #1e2333;
+      --border:    #2a3045;
+      --border-hi: #3d4d70;
+      --text:      #e8eaf0;
+      --muted:     #7a8199;
+      --accent:    #4f7ef8;
+      --accent-lo: rgba(79,126,248,0.12);
+      --accent-hi: #7ba3ff;
+      --green:     #3dba7e;
+      --green-lo:  rgba(61,186,126,0.12);
+      --amber:     #f5a623;
+      --amber-lo:  rgba(245,166,35,0.12);
+      --red:       #e05a5a;
+      --red-lo:    rgba(224,90,90,0.12);
+      --radius:    10px;
+      --mono:      'JetBrains Mono', monospace;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 48px 20px 80px;
+    }
+
+    .header { width: 100%; max-width: 700px; margin-bottom: 40px; }
+
+    .header-eyebrow {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 10px;
+    }
+
+    .header h1 {
+      font-size: 2rem;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      line-height: 1.2;
+    }
+
+    .header h1 span { color: var(--muted); font-weight: 300; }
+
+    .header p {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.65;
+      max-width: 580px;
+    }
+
+    /* ── Engines pill bar ── */
+    .engines {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+    }
+    .engine-pill {
+      background: var(--surface2);
+      border: 1px solid var(--border-hi);
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 0.72rem;
+      font-family: var(--mono);
+      color: var(--accent-hi);
+      letter-spacing: 0.04em;
+    }
+
+    /* ── Flash messages ── */
+    .flash-list { width: 100%; max-width: 700px; margin-bottom: 20px; }
+    .flash {
+      background: var(--red-lo);
+      border: 1px solid var(--red);
+      color: var(--red);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      font-size: 0.875rem;
+      margin-bottom: 8px;
+    }
+
+    /* ── Card ── */
+    .card {
+      width: 100%;
+      max-width: 700px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+    .card-body { padding: 32px; }
+
+    /* ── Mode toggle ── */
+    .mode-toggle {
+      display: flex;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 4px;
+      gap: 4px;
+      margin-bottom: 32px;
+    }
+    .mode-btn {
+      flex: 1;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-family: inherit;
+      font-size: 0.85rem;
+      font-weight: 500;
+      padding: 9px 14px;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      text-align: center;
+    }
+    .mode-btn.active {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border-hi);
+    }
+
+    /* ── Field ── */
+    .field { margin-bottom: 24px; }
+    .field-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.83rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    .badge { font-size: 0.65rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; }
+    .badge-req { background: var(--accent-lo); color: var(--accent); }
+    .badge-opt { background: var(--green-lo);  color: var(--green); }
+
+    /* ── Drop zone ── */
+    .drop-zone {
+      border: 1.5px dashed var(--border-hi);
+      border-radius: var(--radius);
+      padding: 24px 20px;
+      background: var(--surface2);
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); background: var(--accent-lo); }
+    .drop-zone.has-file { border-color: var(--green); background: var(--green-lo); }
+    .drop-zone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+    .drop-icon { width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 1.3rem; background: var(--border); transition: background 0.15s; }
+    .drop-zone.has-file .drop-icon { background: var(--green-lo); }
+    .drop-text { flex: 1; min-width: 0; }
+    .drop-primary { font-size: 0.9rem; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .drop-secondary { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+    .drop-zone.has-file .drop-primary { color: var(--green); }
+
+    /* ── Info box ── */
+    .info-box {
+      background: var(--amber-lo);
+      border: 1px solid rgba(245,166,35,0.25);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      font-size: 0.82rem;
+      color: var(--amber);
+      line-height: 1.6;
+      margin-top: -8px;
+      margin-bottom: 24px;
+      display: none;
+    }
+    .info-box.visible { display: block; }
+
+    /* ── LLM notice ── */
+    .llm-notice {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      font-size: 0.8rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin-bottom: 24px;
+    }
+    .llm-notice strong { color: var(--text); }
+
+    /* ── Divider ── */
+    .divider { height: 1px; background: var(--border); margin: 28px -32px; }
+
+    /* ── Submit ── */
+    .btn {
+      flex: 1;
+      border: none;
+      border-radius: var(--radius);
+      padding: 13px 20px;
+      font-family: inherit;
+      font-size: 0.92rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.08s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .btn:hover { opacity: 0.88; }
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+    .btn-primary { background: var(--accent); color: #fff; width: 100%; }
+
+    /* ── How it works ── */
+    .how {
+      margin-top: 28px;
+      padding-top: 28px;
+      border-top: 1px solid var(--border);
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+    .how-step { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+    .step-num { font-family: var(--mono); font-size: 0.7rem; color: var(--accent); letter-spacing: 0.08em; margin-bottom: 6px; }
+    .step-title { font-size: 0.82rem; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+    .step-desc { font-size: 0.76rem; color: var(--muted); line-height: 1.55; }
+
+    /* ── Footer ── */
+    .footer { margin-top: 40px; font-size: 0.75rem; color: var(--muted); text-align: center; font-family: var(--mono); letter-spacing: 0.03em; }
+
+    /* ── Spinner ── */
+    #spinner { display: none; position: fixed; inset: 0; background: rgba(15,17,23,0.85); backdrop-filter: blur(6px); z-index: 999; flex-direction: column; align-items: center; justify-content: center; gap: 20px; }
+    #spinner.active { display: flex; }
+    .spin-ring { width: 48px; height: 48px; border: 3px solid var(--border-hi); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.75s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin-label { font-family: var(--mono); font-size: 0.82rem; color: var(--muted); letter-spacing: 0.06em; }
+
+    @media (max-width: 600px) {
+      .how { grid-template-columns: 1fr 1fr; }
+      .header h1 { font-size: 1.5rem; }
+    }
+    @media (max-width: 380px) {
+      .how { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="header-eyebrow">Multi-engine · Local-first · API-optional</div>
+    <h1>PDF <span>→</span> CSV Converter</h1>
+    <p>
+      Upload any PDF containing tables. The extractor runs entirely
+      locally — no API key required. Provide a reference sheet to guide
+      the output format. An LLM can optionally assist with ambiguous
+      column mapping if an API key is configured in the environment.
+    </p>
+    <div class="engines">
+      <span class="engine-pill">pdfplumber</span>
+      <span class="engine-pill">camelot-lattice</span>
+      <span class="engine-pill">camelot-stream</span>
+      <span class="engine-pill">tabula-py</span>
+      <span class="engine-pill">text-heuristic</span>
+      <span class="engine-pill">LLM mapping (optional)</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+
+      <div class="mode-toggle" role="group" aria-label="Conversion mode">
+        <button type="button" class="mode-btn active" id="btn-ref"
+                onclick="setMode('ref')">
+          📐 With reference sheet
+        </button>
+        <button type="button" class="mode-btn" id="btn-direct"
+                onclick="setMode('direct')">
+          📋 Direct extraction
+        </button>
+      </div>
+
+      <form id="upload-form" action="/process" method="post" enctype="multipart/form-data">
+
+        <!-- PDF upload -->
+        <div class="field">
+          <div class="field-label">
+            PDF document
+            <span class="badge badge-req">Required</span>
+          </div>
+          <div class="drop-zone" id="dz-pdf">
+            <input type="file" name="pdf_file" id="pdf_file" accept=".pdf"
+                   onchange="onFileChange(this, 'dz-pdf', 'pdf-name')" required>
+            <div class="drop-icon">📄</div>
+            <div class="drop-text">
+              <div class="drop-primary" id="pdf-name">Click to choose or drop a PDF</div>
+              <div class="drop-secondary">Max 64 MB · Any PDF with table content</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Reference CSV -->
+        <div class="field" id="ref-field">
+          <div class="field-label">
+            Reference sheet
+            <span class="badge badge-opt">Optional</span>
+          </div>
+          <div class="drop-zone" id="dz-ref">
+            <input type="file" name="ref_file" id="ref_file" accept=".csv"
+                   onchange="onFileChange(this, 'dz-ref', 'ref-name')">
+            <div class="drop-icon">🗂️</div>
+            <div class="drop-text">
+              <div class="drop-primary" id="ref-name">Click to choose or drop a CSV</div>
+              <div class="drop-secondary">Reference CSV that defines the target column structure</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- LLM notice (shown in ref mode) -->
+        <div class="llm-notice" id="llm-notice">
+          <strong>Column mapping:</strong> Columns are matched automatically using
+          fuzzy name similarity (no API key needed). If
+          <code>ANTHROPIC_API_KEY</code> or <code>OPENAI_API_KEY</code> is set in
+          the server environment, an LLM will additionally refine ambiguous
+          mappings — but this is purely optional and the app works without it.
+        </div>
+
+        <!-- Direct mode info -->
+        <div class="info-box" id="direct-info">
+          <strong>Direct extraction mode:</strong> All five local engines run in
+          sequence. The highest-quality result is selected automatically and
+          output as-is, preserving the original table structure.
+        </div>
+
+        <div class="divider"></div>
+
+        <button type="submit" class="btn btn-primary" id="submit-btn">
+          <span>⬇</span>
+          <span id="btn-label">Extract &amp; Convert</span>
+        </button>
+
+        <!-- How it works -->
+        <div class="how">
+          <div class="how-step">
+            <div class="step-num">01</div>
+            <div class="step-title">Multi-engine scan</div>
+            <div class="step-desc">Five extraction engines run in order; the best result wins.</div>
+          </div>
+          <div class="how-step">
+            <div class="step-num">02</div>
+            <div class="step-title">Smart dedup</div>
+            <div class="step-desc">Near-duplicate tables across pages and engines are merged.</div>
+          </div>
+          <div class="how-step">
+            <div class="step-num">03</div>
+            <div class="step-title">Schema mapping</div>
+            <div class="step-desc">Fuzzy column matching maps data to your reference format.</div>
+          </div>
+          <div class="how-step">
+            <div class="step-num">04</div>
+            <div class="step-title">Clean CSV out</div>
+            <div class="step-desc">Validated, well-formed CSV — always, regardless of API availability.</div>
+          </div>
+        </div>
+
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Result panel ── -->
+  <div class="card" id="result-card" style="display:none; margin-top:24px;">
+    <div class="card-body">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div>
+          <div class="field-label" style="margin-bottom:4px;">Result</div>
+          <div class="drop-secondary" id="result-meta"></div>
+        </div>
+        <a class="btn btn-primary" id="download-link" href="#" style="width:auto; flex:0 0 auto; text-decoration:none;">
+          <span>⬇</span><span>Download CSV</span>
+        </a>
+      </div>
+      <div id="result-warnings" style="margin-top:14px;"></div>
+      <div style="margin-top:16px; overflow:auto; max-height:460px; border:1px solid var(--border); border-radius:var(--radius);">
+        <table id="result-table" style="border-collapse:collapse; width:100%; font-family:var(--mono); font-size:0.74rem;"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Error panel ── -->
+  <div class="flash-list" id="error-panel" style="display:none; margin-top:24px;">
+    <div class="flash" id="error-text"></div>
+  </div>
+
+  <div class="footer">
+    local-first extraction · pdfplumber / camelot / tabula · optional LLM assist
+  </div>
+
+  <div id="spinner">
+    <div class="spin-ring"></div>
+    <div class="spin-label" id="spin-msg">Reading PDF…</div>
+  </div>
+
+  <script>
+    let currentMode = 'ref';
+
+    function setMode(mode) {
+      currentMode = mode;
+      const refField   = document.getElementById('ref-field');
+      const llmNotice  = document.getElementById('llm-notice');
+      const directInfo = document.getElementById('direct-info');
+      const btnRef     = document.getElementById('btn-ref');
+      const btnDirect  = document.getElementById('btn-direct');
+
+      if (mode === 'ref') {
+        btnRef.classList.add('active');
+        btnDirect.classList.remove('active');
+        refField.style.display  = '';
+        llmNotice.style.display = '';
+        directInfo.classList.remove('visible');
+      } else {
+        btnDirect.classList.add('active');
+        btnRef.classList.remove('active');
+        refField.style.display  = 'none';
+        llmNotice.style.display = 'none';
+        directInfo.classList.add('visible');
+        const refInput = document.getElementById('ref_file');
+        refInput.value = '';
+        onFileChange(refInput, 'dz-ref', 'ref-name');
+      }
+    }
+
+    function onFileChange(input, dzId, nameId) {
+      const dz     = document.getElementById(dzId);
+      const nameEl = document.getElementById(nameId);
+      if (input.files && input.files[0]) {
+        nameEl.textContent = input.files[0].name;
+        dz.classList.add('has-file');
+      } else {
+        nameEl.textContent = dzId === 'dz-pdf'
+          ? 'Click to choose or drop a PDF'
+          : 'Click to choose or drop a CSV';
+        dz.classList.remove('has-file');
+      }
+    }
+
+    document.querySelectorAll('.drop-zone').forEach(dz => {
+      dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drag-over'); });
+      dz.addEventListener('dragleave', ()  => dz.classList.remove('drag-over'));
+      dz.addEventListener('drop',      ()  => dz.classList.remove('drag-over'));
+    });
+
+    const MSGS = [
+      'Reading PDF…',
+      'Running OCR / extraction engines…',
+      'Reconstructing tables…',
+      'Mapping to your reference format…',
+      'Building your CSV… (large scans can take a minute)',
+    ];
+    let msgIdx = 0, msgTimer, pollTimer;
+
+    function startSpinner() {
+      msgIdx = 0;
+      document.getElementById('spinner').classList.add('active');
+      document.getElementById('spin-msg').textContent = MSGS[0];
+      clearInterval(msgTimer);
+      msgTimer = setInterval(() => {
+        msgIdx = (msgIdx + 1) % MSGS.length;
+        document.getElementById('spin-msg').textContent = MSGS[msgIdx];
+      }, 2500);
+    }
+    function stopSpinner() {
+      clearInterval(msgTimer);
+      document.getElementById('spinner').classList.remove('active');
+    }
+    function showError(msg) {
+      stopSpinner();
+      document.getElementById('result-card').style.display = 'none';
+      document.getElementById('error-text').textContent = '⚠ ' + msg;
+      document.getElementById('error-panel').style.display = 'block';
+    }
+    function setBusy(busy) {
+      document.getElementById('submit-btn').disabled = busy;
+    }
+    function esc(s) {
+      return (s == null ? '' : String(s))
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function renderPreview(data, jobId) {
+      const dl = document.getElementById('download-link');
+      dl.href = '/download/' + jobId;
+      dl.setAttribute('download', data.filename || 'output.csv');
+
+      document.getElementById('result-meta').textContent =
+        (data.filename || 'output.csv') + ' · ' + data.total_rows + ' rows'
+        + (data.total_rows > data.preview.length
+            ? ' (showing first ' + data.preview.length + ')' : '');
+
+      // parse CSV preview lines into cells (simple, quote-aware)
+      function splitCsv(line) {
+        const out = []; let cur = '', q = false;
+        for (let i = 0; i < line.length; i++) {
+          const c = line[i];
+          if (c === '"') { if (q && line[i+1] === '"') { cur += '"'; i++; } else q = !q; }
+          else if (c === ',' && !q) { out.push(cur); cur = ''; }
+          else cur += c;
+        }
+        out.push(cur); return out;
+      }
+      const rows = data.preview.map(splitCsv);
+      const ncol = rows.reduce((m, r) => Math.max(m, r.length), 0);
+      let html = '';
+      rows.forEach((r, ri) => {
+        html += '<tr>';
+        for (let c = 0; c < ncol; c++) {
+          const v = esc(r[c] || '');
+          const pad = 'padding:4px 8px; border-bottom:1px solid var(--border); white-space:nowrap;';
+          html += '<td style="' + pad + (ri % 2 ? 'background:var(--surface2);' : '') + '">' + v + '</td>';
+        }
+        html += '</tr>';
+      });
+      document.getElementById('result-table').innerHTML = html;
+
+      const warns = data.warnings || [];
+      const wEl = document.getElementById('result-warnings');
+      wEl.innerHTML = warns.length
+        ? '<div class="llm-notice" style="margin:0;"><strong>Notes:</strong> '
+          + warns.map(esc).join(' · ') + '</div>'
+        : '';
+
+      document.getElementById('error-panel').style.display = 'none';
+      document.getElementById('result-card').style.display = '';
+      document.getElementById('result-card').scrollIntoView({behavior:'smooth', block:'start'});
+    }
+
+    function poll(jobId) {
+      pollTimer = setInterval(() => {
+        fetch('/status/' + jobId, {cache: 'no-store'})
+          .then(r => r.json())
+          .then(s => {
+            if (s.state === 'done') {
+              clearInterval(pollTimer);
+              fetch('/preview/' + jobId, {cache: 'no-store'})
+                .then(r => r.json())
+                .then(p => { stopSpinner(); setBusy(false); renderPreview(p, jobId); })
+                .catch(() => { stopSpinner(); setBusy(false); showError('Could not load result.'); });
+            } else if (s.state === 'error' || s.state === 'unknown') {
+              clearInterval(pollTimer); setBusy(false);
+              showError(s.error || 'Processing failed.');
+            } else if (s.message) {
+              document.getElementById('spin-msg').textContent = s.message;
+            }
+          })
+          .catch(() => { /* transient network error during long job — keep polling */ });
+      }, 1500);
+    }
+
+    document.getElementById('upload-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      const pdfInput = document.getElementById('pdf_file');
+      if (!pdfInput.files || pdfInput.files.length === 0) {
+        showError('Please choose a PDF file first.');
+        return;
+      }
+      document.getElementById('result-card').style.display = 'none';
+      document.getElementById('error-panel').style.display = 'none';
+      clearInterval(pollTimer);
+      setBusy(true);
+      startSpinner();
+
+      const fd = new FormData();
+      fd.append('pdf_file', pdfInput.files[0]);
+      const refInput = document.getElementById('ref_file');
+      if (currentMode === 'ref' && refInput.files && refInput.files[0]) {
+        fd.append('ref_file', refInput.files[0]);
+      }
+
+      fetch('/process', {method: 'POST', body: fd, cache: 'no-store'})
+        .then(async r => {
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(data.error || ('Request failed (' + r.status + ')'));
+          return data;
+        })
+        .then(data => { poll(data.job_id); })
+        .catch(err => {
+          setBusy(false);
+          const msg = (err && /failed to fetch|networkerror|load failed/i.test(err.message || ''))
+            ? 'Could not reach the server. Make sure the app is running (python3 app.py) '
+              + 'and that you opened http://127.0.0.1:5000 — not the HTML file directly.'
+            : (err.message || 'Upload failed.');
+          showError(msg);
+        });
+    });
+
+    window.addEventListener('pageshow', stopSpinner);
+  </script>
+</body>
+</html>
